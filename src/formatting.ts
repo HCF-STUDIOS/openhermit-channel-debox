@@ -1,11 +1,11 @@
 /**
  * Markdown → Debox-friendly text helpers.
  *
- * Debox accepts several `parse_mode` values (text / rich_text / markdown
- * / markdown_v2 / html / image / video / file). The simplest, safest
- * choice for arbitrary agent output is `markdown`. Long messages are
- * chunked on paragraph/sentence boundaries to stay under the documented
- * 5000-character text limit.
+ * Debox accepts several `parse_mode` values (richtext / text / Markdown
+ * / MarkdownV2 / HTML / image / video / file — case-sensitive). The
+ * simplest, safest choice for arbitrary agent output is `Markdown`.
+ * Long messages are chunked on paragraph/sentence boundaries to stay
+ * under the documented 5000-character text limit.
  */
 
 import { marked } from 'marked';
@@ -15,7 +15,7 @@ const DEBOX_MAX_LENGTH = 5000;
 
 export interface FormattedChunk {
   text: string;
-  parseMode: 'markdown';
+  parseMode: 'Markdown';
 }
 
 const splitMessage = (text: string): string[] => {
@@ -60,7 +60,7 @@ export const formatAgentResponse = (text: string): FormattedChunk[] => {
   const normalized = normalizeMarkdown(text);
   return splitMessage(normalized).map((chunk) => ({
     text: chunk,
-    parseMode: 'markdown' as const,
+    parseMode: 'Markdown' as const,
   }));
 };
 

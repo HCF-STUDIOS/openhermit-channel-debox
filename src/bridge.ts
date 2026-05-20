@@ -21,6 +21,14 @@ import { formatAgentResponse } from './formatting.js';
 /** Agent-emitted sentinel meaning "do not reply in this group". */
 const NO_REPLY_TAG = '<NO_REPLY>';
 
+const safeStringify = (value: unknown): string => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
 interface TurnResult {
   text: string | undefined;
   error: string | undefined;
@@ -104,12 +112,10 @@ export class DeboxBridge implements ChannelOutbound {
   // ── Inbound: called by the bot lifecycle ───────────────────────────
 
   async handleIncoming(payload: DeboxIncomingMessage): Promise<void> {
-    const chatType: DeboxChatType =
-      payload.chat_type ?? (payload.group_id ? 'group' : 'private');
-    const chatId =
-      chatType === 'group' ? payload.group_id : payload.from_user_id;
-    if (!chatId) {
-      this.log('dropping inbound: missing chat id');
+    const chatId = payload.chat?.id;
+    const chatType = payload.chat?.type;
+    if (!chatId || !chatType) {
+      this.log(`dropping inbound: missing chat id/type (payload: ${safeStringify(payload)})`);
       return;
     }
 
@@ -117,8 +123,9 @@ export class DeboxBridge implements ChannelOutbound {
       this.log(`dropping inbound from non-allowed group ${chatId}`);
       return;
     }
-    if (payload.from_user_id && this.allowedSenders && !this.allowedSenders.has(payload.from_user_id)) {
-      this.log(`dropping inbound from non-allowed sender ${payload.from_user_id}`);
+    const senderId = payload.from?.user_id;
+    if (senderId && this.allowedSenders && !this.allowedSenders.has(senderId)) {
+      this.log(`dropping inbound from non-allowed sender ${senderId}`);
       return;
     }
 
@@ -137,7 +144,7 @@ export class DeboxBridge implements ChannelOutbound {
     chatType: DeboxChatType,
     payload: DeboxIncomingMessage,
   ): Promise<void> {
-    const text = (payload.message ?? payload.message_raw ?? '').trim();
+    const text = (payload.text ?? '').trim();
     if (!text) return;
 
     if (text === '/new') {
@@ -217,8 +224,8 @@ export class DeboxBridge implements ChannelOutbound {
     } else {
       metadata.debox_user_id = chatId;
     }
-    if (payload.from_user_id) metadata.debox_from_user_id = payload.from_user_id;
-    if (payload.language) metadata.debox_language = payload.language;
+    const senderId = payload.from?.user_id;
+    if (senderId) metadata.debox_from_user_id = senderId;
 
     await this.client.openSession({
       sessionId,
@@ -239,20 +246,21 @@ export class DeboxBridge implements ChannelOutbound {
     text: string,
     payload: DeboxIncomingMessage,
   ): Promise<void> {
-    // Debox doesn't (yet) tell us in the payload whether the bot was mentioned;
-    // treat group messages as un-mentioned by default unless the raw text
-    // explicitly contains a mention token. The agent decides whether to reply.
+    // The Debox getUpdates schema doesn't surface a mention flag, so we
+    // treat groups as un-mentioned (the agent decides whether to reply)
+    // and DMs as always mentioned.
     const mentioned =
       chatType !== 'group' ||
       Boolean(payload.mention_users && payload.mention_users.length > 0);
 
     await this.ensureSession(sessionId, chatId, chatType, payload);
 
-    const senderPayload = payload.from_user_id
+    const senderId = payload.from?.user_id;
+    const senderPayload = senderId
       ? {
           sender: {
             channel: 'debox' as const,
-            channelUserId: payload.from_user_id,
+            channelUserId: senderId,
           },
         }
       : {};

@@ -36,7 +36,6 @@ export class DeboxBot {
   private readonly bridge: DeboxBridge;
   private readonly log: (message: string) => void;
   private running = false;
-  private pollOffset: number | undefined;
   private pollAbort: AbortController | undefined;
 
   constructor(private readonly options: BotOptions) {
@@ -49,7 +48,7 @@ export class DeboxBot {
   async start(): Promise<void> {
     try {
       const info = await this.api.getBotInfo();
-      const label = info.username ?? info.user_id ?? 'unknown';
+      const label = info.name ?? info.user_id ?? 'unknown';
       this.log(`connected (bot: ${label})`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -100,16 +99,12 @@ export class DeboxBot {
     while (this.running) {
       try {
         const updates = await this.api.getUpdates({
-          ...(this.pollOffset !== undefined ? { offset: this.pollOffset } : {}),
           timeoutSec: 30,
           signal: this.pollAbort.signal,
         });
         this.options.reportRuntimeError?.(null);
         for (const update of updates) {
           void this.handleUpdate(update);
-          const id =
-            typeof update.update_id === 'number' ? update.update_id : undefined;
-          if (id !== undefined) this.pollOffset = id + 1;
         }
       } catch (error) {
         if (!this.running) break;
@@ -173,7 +168,10 @@ export class DeboxBot {
 
   private async handleUpdate(update: DeboxUpdate): Promise<void> {
     const message = extractMessage(update);
-    if (!message) return;
+    if (!message) {
+      this.log(`inbound update: no message extracted from ${safeStringify(update)}`);
+      return;
+    }
     try {
       await this.bridge.handleIncoming(message);
     } catch (error) {
@@ -184,13 +182,25 @@ export class DeboxBot {
 }
 
 /**
- * Webhook payloads sometimes arrive flat (no `message` wrapper) — try
- * both shapes so callers don't silently drop messages.
+ * Per the Debox docs, both polling and webhook updates wrap the message
+ * in a `message` field on the update object. We also accept an unwrapped
+ * shape (where `chat` / `from` live directly on the update) for forward
+ * compatibility with surfaces that may flatten the payload.
  */
 const extractMessage = (update: DeboxUpdate): DeboxIncomingMessage | undefined => {
   if (update.message) return update.message;
-  if (typeof update.from_user_id === 'string') {
+  const flatChat = (update as { chat?: unknown }).chat;
+  const flatFrom = (update as { from?: unknown }).from;
+  if (flatChat || flatFrom) {
     return update as unknown as DeboxIncomingMessage;
   }
   return undefined;
+};
+
+const safeStringify = (value: unknown): string => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 };

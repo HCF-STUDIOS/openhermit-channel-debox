@@ -12,7 +12,7 @@ import { encodeChatTarget, parseChatTarget } from '../src/bridge.js';
 test('formatAgentResponse emits a single markdown chunk for short input', () => {
   const chunks = formatAgentResponse('Hello **world**');
   assert.equal(chunks.length, 1);
-  assert.equal(chunks[0]!.parseMode, 'markdown');
+  assert.equal(chunks[0]!.parseMode, 'Markdown');
   assert.match(chunks[0]!.text, /Hello \*\*world\*\*/);
 });
 

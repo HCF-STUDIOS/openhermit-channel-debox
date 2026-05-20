@@ -37,7 +37,7 @@ const manifest: ChannelManifest = {
 
   secretKeys: [
     { key: 'DEBOX_API_KEY', label: 'API Key', placeholder: 'Enter Debox bot API key' },
-    { key: 'DEBOX_API_SECRET', label: 'App Secret (optional)', placeholder: 'Enter Debox App Secret' },
+    { key: 'DEBOX_API_SECRET', label: 'App Secret', placeholder: 'Enter Debox App Secret', optional: true },
   ],
   configFields: [
     {

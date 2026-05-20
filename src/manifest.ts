@@ -35,10 +35,65 @@ const manifest: ChannelManifest = {
   namespace: 'debox',
   displayName: 'Debox',
 
+  secretKeys: [
+    { key: 'DEBOX_API_KEY', label: 'API Key', placeholder: 'Enter Debox bot API key' },
+    { key: 'DEBOX_API_SECRET', label: 'App Secret (optional)', placeholder: 'Enter Debox App Secret' },
+  ],
+  configFields: [
+    {
+      kind: 'select',
+      key: 'mode',
+      label: 'Mode',
+      defaultValue: 'polling',
+      options: [
+        { value: 'polling', label: 'Polling' },
+        { value: 'webhook', label: 'Webhook' },
+      ],
+    },
+    {
+      kind: 'webhook_url',
+      label: 'Webhook URL',
+      help: 'Configure this URL in Debox bot console. Inbound requests are verified by matching X-API-KEY against the bot key.',
+      showWhen: { field: 'mode', equals: 'webhook' },
+    },
+    {
+      kind: 'text',
+      key: 'base_url',
+      label: 'Base URL (optional)',
+      placeholder: 'https://open.debox.pro',
+      help: 'Override the default Debox API endpoint.',
+    },
+    {
+      kind: 'string_list',
+      key: 'allowed_senders',
+      label: 'Allowed sender IDs (optional)',
+      placeholder: 'comma-separated, e.g. u_abc, u_xyz',
+      help: 'Leave blank to accept all senders.',
+    },
+    {
+      kind: 'string_list',
+      key: 'allowed_group_ids',
+      label: 'Allowed group IDs (optional)',
+      placeholder: 'comma-separated, e.g. gid_123, gid_456',
+      help: 'Leave blank to accept all groups.',
+    },
+  ],
+  defaultConfig: {
+    api_key: '${{DEBOX_API_KEY}}',
+    api_secret: '${{DEBOX_API_SECRET}}',
+    mode: 'polling',
+  },
+
   start: async (rawConfig, context) => {
     const config = rawConfig as DeboxRuntimeConfig;
     const log = (msg: string): void => context.logger('debox', msg);
-    const apiKey = config.api_key?.trim() ?? '';
+    // Strip out unresolved `${{SECRET}}` placeholders left over when the
+    // operator hasn't set the corresponding secret yet — treat those as
+    // unset rather than passing the literal placeholder downstream.
+    const isPlaceholder = (s: string | undefined): boolean =>
+      typeof s === 'string' && /^\$\{\{\w+\}\}$/.test(s.trim());
+    const apiKey = isPlaceholder(config.api_key) ? '' : (config.api_key?.trim() ?? '');
+    const apiSecret = isPlaceholder(config.api_secret) ? undefined : config.api_secret;
 
     if (!apiKey) {
       log('missing api_key — channel disabled until configured');
@@ -46,7 +101,7 @@ const manifest: ChannelManifest = {
     }
 
     const apiOptions: ConstructorParameters<typeof DeboxApi>[0] = { apiKey };
-    if (config.api_secret) apiOptions.apiSecret = config.api_secret;
+    if (apiSecret) apiOptions.apiSecret = apiSecret;
     if (config.base_url) apiOptions.baseUrl = config.base_url;
     const api = new DeboxApi(apiOptions);
 

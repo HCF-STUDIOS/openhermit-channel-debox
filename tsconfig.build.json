@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": {
+      "@openhermit/protocol": ["openhermit/packages/protocol/src/index.ts"],
+      "@openhermit/shared": ["openhermit/packages/shared/src/index.ts"]
+    },
+    "composite": false,
+    "incremental": false,
+    "preserveSymlinks": false
+  },
+  "include": [
+    "src",
+    "../openhermit/packages/protocol/src",
+    "../openhermit/packages/shared/src"
+  ]
+}

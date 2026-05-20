@@ -1,6 +1,6 @@
 {
   "name": "@openhermit/channel-debox",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "OpenHermit channel plugin for Debox (bot API via webhook or long-polling).",
   "license": "MIT",
   "type": "module",

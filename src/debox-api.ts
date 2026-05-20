@@ -1,59 +1,61 @@
 /**
  * Minimal Debox Bot API client. Uses `fetch` directly — no SDK dependency.
  *
- * Authentication: every request carries `X-API-KEY: <apiKey>` (except
- * `/openapi/box/info` which is unauthenticated). The bot's "App Secret"
- * is held by the caller but the public docs are vague on what it
- * actually signs, so this client doesn't use it.
- *
- * Endpoints used here are taken from https://docs.debox.pro/NODE-SDK.
+ * Endpoints and field shapes follow https://docs.debox.pro/ApiOnePage.
+ * Every request carries `X-API-KEY: <apiKey>`. The bot's optional
+ * "App Secret" is accepted but not currently used in any signed request.
  */
 
 const DEFAULT_BASE_URL = 'https://open.debox.pro';
 
 export type DeboxChatType = 'private' | 'group';
 
+/**
+ * `parse_mode` values accepted by `bot/sendMessage`. These are
+ * case-sensitive — `Markdown` and `MarkdownV2` use mixed case, `HTML`
+ * is upper, and the rich-text token is `richtext` (one word).
+ */
 export type DeboxParseMode =
+  | 'richtext'
   | 'text'
-  | 'rich_text'
-  | 'markdown'
-  | 'markdown_v2'
-  | 'html'
+  | 'Markdown'
+  | 'MarkdownV2'
+  | 'HTML'
   | 'image'
   | 'video'
   | 'file';
 
+/** Response from `POST /openapi/bot/getMe`. */
 export interface DeboxBotInfo {
   user_id?: string;
-  username?: string;
-  nickname?: string;
-  avatar?: string;
-  bio?: string;
+  name?: string;
+  address?: string;
+  pic?: string;
+  level?: number;
+  level_icon?: string;
 }
 
+/**
+ * Inbound message as wrapped in a Debox update. Field layout follows
+ * https://docs.debox.pro/ApiOnePage#api-bot-getupdates — the chat id
+ * lives under `chat.id`, sender under `from.user_id`, and the text in
+ * `text` (NOT `message`, which was the previous (incorrect) guess).
+ */
 export interface DeboxIncomingMessage {
-  /** Inbound payload from a webhook or polling update. */
-  from_user_id?: string;
-  to_user_id?: string;
-  group_id?: string;
-  language?: string;
-  /** Bot-mention-normalized text (mentions replaced). */
-  message?: string;
-  /** Raw text with `@<id>` mentions intact. */
-  message_raw?: string;
-  mention_users?: string[];
   message_id?: string;
-  timestamp?: number;
-  /** Some payloads pre-categorise the chat. */
-  chat_type?: DeboxChatType;
+  from?: { user_id?: string; name?: string; address?: string };
+  chat?: { id?: string; type?: DeboxChatType };
+  text?: string;
+  parse_mode?: string;
+  /** Not in the published schema, kept for forward-compat with mentions. */
+  mention_users?: string[];
 }
 
 export interface DeboxUpdate {
-  /** Some surfaces use `update_id`, others `id`. We expose both, untouched. */
-  update_id?: number;
+  /** Per docs, updates carry a numeric `id`. `update_id` is kept as a fallback. */
   id?: number | string;
+  update_id?: number;
   message?: DeboxIncomingMessage;
-  /** Future: callback_query for inline buttons. */
   [key: string]: unknown;
 }
 
@@ -112,11 +114,9 @@ export class DeboxApi {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   }
 
-  /** Probe endpoint that doesn't require auth — useful for health checks. */
+  /** Returns the bot's own profile. Used at startup as a connectivity probe. */
   async getBotInfo(): Promise<DeboxBotInfo> {
-    return this.request<DeboxBotInfo>('GET', '/openapi/box/info', undefined, {
-      authenticated: false,
-    });
+    return this.request<DeboxBotInfo>('POST', '/openapi/bot/getMe', {});
   }
 
   async sendMessage(params: {
@@ -142,22 +142,18 @@ export class DeboxApi {
 
   /**
    * Long-poll for updates. Returns immediately with an empty list if no
-   * updates are available within `timeoutSec` seconds. Pass the highest
-   * `update_id` you've seen + 1 as `offset` to ack and advance.
+   * updates are available within `timeoutSec` seconds (range 1–60).
    *
-   * The Debox docs describe `GetUpdates`/`GetUpdatesChan` in the Node
-   * SDK; the underlying HTTP endpoint here is best-effort and may need
-   * adjustment once vendor docs settle.
+   * Debox `getUpdates` is queue-style: each delivered update is removed
+   * server-side, so there is no `offset` parameter (unlike Telegram).
    */
   async getUpdates(params?: {
-    offset?: number;
     timeoutSec?: number;
     signal?: AbortSignal;
   }): Promise<DeboxUpdate[]> {
     const body: Record<string, unknown> = {
       timeout: params?.timeoutSec ?? 30,
     };
-    if (params?.offset !== undefined) body.offset = params.offset;
     const opts: { authenticated?: boolean; signal?: AbortSignal } = {};
     if (params?.signal) opts.signal = params.signal;
     return this.request<DeboxUpdate[]>(
@@ -169,9 +165,11 @@ export class DeboxApi {
   }
 
   /**
-   * Register a webhook URL with Debox. The bot management console
-   * normally handles this, but exposing the call lets callers re-sync
-   * after a URL change.
+   * setWebhook / deleteWebhook are NOT in the published Debox API. The
+   * webhook URL is configured on the bot's open-platform console; these
+   * calls remain for callers that want to attempt remote re-sync and
+   * are expected to 404 in current Debox versions (the caller logs and
+   * carries on).
    */
   async setWebhook(url: string): Promise<unknown> {
     return this.request<unknown>('POST', '/openapi/bot/setWebhook', { url });

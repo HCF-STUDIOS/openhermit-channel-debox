@@ -15,9 +15,38 @@ export interface BotOptions {
   webhookUrl?: string;
   /** Expected `X-API-KEY` header on inbound webhook requests. Must equal the bot's API key. */
   webhookSecret?: string;
+  /** Base delay after the first polling failure (ms). Doubles per consecutive failure. */
   pollingInterval?: number;
+  /**
+   * Ceiling for the exponential backoff after consecutive polling errors (ms).
+   * Debox's getUpdates returns HTTP 200 with a "Bad Request" body for a bot
+   * whose token/config is invalid, which the API client throws on. Without
+   * backoff the loop re-polls every `pollingInterval` (~1s) forever — across a
+   * few bad bots that becomes a request storm that saturates the gateway's
+   * event loop / DB pool. Backing off to this ceiling caps a stuck bot to one
+   * poll per interval; a recovering bot resets to full speed on the first good
+   * poll. Defaults to 60s.
+   */
+  maxRetryDelayMs?: number;
   logger?: (message: string) => void;
   reportRuntimeError?: (error: string | null) => void;
+}
+
+/**
+ * Exponential backoff with jitter for a retry loop. `attempt` is the 1-based
+ * consecutive-failure count. Returns `baseMs * 2^(attempt-1)` capped at `maxMs`
+ * then ±20% jitter so many bots failing at once don't retry in lockstep.
+ * `random` is injectable for deterministic tests.
+ */
+export function computeBackoffMs(
+  attempt: number,
+  baseMs: number,
+  maxMs: number,
+  random: () => number = Math.random,
+): number {
+  const n = Math.max(1, Math.floor(attempt));
+  const capped = Math.min(baseMs * 2 ** Math.min(n - 1, 20), maxMs);
+  return Math.round(capped * (0.8 + random() * 0.4));
 }
 
 export interface WebhookRequestLike {
@@ -37,6 +66,8 @@ export class DeboxBot {
   private readonly log: (message: string) => void;
   private running = false;
   private pollAbort: AbortController | undefined;
+  /** Consecutive failed polls; drives the exponential backoff, reset on success. */
+  private consecutiveErrors = 0;
 
   constructor(private readonly options: BotOptions) {
     this.api = options.api;
@@ -102,6 +133,7 @@ export class DeboxBot {
           timeoutSec: 30,
           signal: this.pollAbort.signal,
         });
+        this.consecutiveErrors = 0;
         this.options.reportRuntimeError?.(null);
         for (const update of updates) {
           void this.handleUpdate(update);
@@ -109,12 +141,16 @@ export class DeboxBot {
       } catch (error) {
         if (!this.running) break;
         if (error instanceof DOMException && error.name === 'AbortError') break;
-        const message = error instanceof Error ? error.message : String(error);
-        this.log(`polling error: ${message}`);
-        this.options.reportRuntimeError?.(`polling error: ${message}`);
-        await new Promise((resolve) =>
-          setTimeout(resolve, this.options.pollingInterval ?? 1000),
+        this.consecutiveErrors += 1;
+        const delay = computeBackoffMs(
+          this.consecutiveErrors,
+          this.options.pollingInterval ?? 1000,
+          this.options.maxRetryDelayMs ?? 60_000,
         );
+        const message = error instanceof Error ? error.message : String(error);
+        this.log(`polling error: ${message} (retry in ${delay}ms, streak ${this.consecutiveErrors})`);
+        this.options.reportRuntimeError?.(`polling error: ${message}`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
